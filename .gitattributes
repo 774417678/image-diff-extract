@@ -1,0 +1,8 @@
+# 统一换行符处理
+# 仓库内一律以 LF 存储；Windows 批处理文件检出时必须保持 CRLF
+* text=auto
+*.bat text eol=crlf
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary

@@ -1,0 +1,1061 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>图片差异提取 · DiffGet</title>
+<style>
+  :root {
+    --bg: #0d1220;
+    --bg-grad-1: #101829;
+    --bg-grad-2: #0b0f1a;
+    --card: #161e2e;
+    --card-border: #253049;
+    --text: #e8ecf4;
+    --text-dim: #8b96ad;
+    --accent: #4f8cff;
+    --accent-2: #7b5cff;
+    --ok: #34c98e;
+    --err: #ff5f6b;
+    --radius: 14px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  /* hidden 属性必须优先于组件自身的 display 设置（否则缩略图等占位元素会常显） */
+  [hidden] { display: none !important; }
+  html, body { height: 100%; }
+  body {
+    font-family: system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", "PingFang SC", sans-serif;
+    background: linear-gradient(160deg, var(--bg-grad-1), var(--bg-grad-2)) fixed;
+    color: var(--text);
+    min-height: 100vh;
+    padding: 24px 16px 48px;
+  }
+  .container { max-width: 1180px; margin: 0 auto; }
+
+  /* ---------- 顶栏 ---------- */
+  header {
+    display: flex; align-items: center; justify-content: space-between;
+    flex-wrap: wrap; gap: 12px; margin-bottom: 22px;
+  }
+  .title h1 { font-size: 24px; letter-spacing: 1px; }
+  .title h1 .logo {
+    background: linear-gradient(135deg, var(--accent), var(--accent-2));
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+  .title p { font-size: 13px; color: var(--text-dim); margin-top: 4px; }
+  .service-pill {
+    display: flex; align-items: center; gap: 8px;
+    background: var(--card); border: 1px solid var(--card-border);
+    border-radius: 999px; padding: 8px 16px; font-size: 13px;
+  }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: #888; flex: none; }
+  .dot.ok { background: var(--ok); box-shadow: 0 0 8px var(--ok); }
+  .dot.err { background: var(--err); box-shadow: 0 0 8px var(--err); }
+  .service-info { font-size: 12px; color: var(--text-dim); margin-top: 6px; width: 100%; }
+
+  /* ---------- 卡片通用 ---------- */
+  .card {
+    background: var(--card); border: 1px solid var(--card-border);
+    border-radius: var(--radius); padding: 18px;
+    box-shadow: 0 6px 24px rgba(0, 0, 0, .25);
+  }
+
+  /* ---------- 两个图片框 ---------- */
+  .cards { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-bottom: 18px; }
+  @media (max-width: 900px) { .cards { grid-template-columns: 1fr; } }
+  .img-card-head { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 12px; }
+  .img-card-head h2 { font-size: 16px; }
+  .img-card-head .sub { font-size: 12px; color: var(--text-dim); margin-top: 3px; }
+  .badge {
+    font-size: 12px; padding: 3px 10px; border-radius: 999px; flex: none;
+    background: #232c42; color: var(--text-dim); border: 1px solid var(--card-border);
+  }
+  .badge.ok { color: var(--ok); border-color: rgba(52, 201, 142, .4); }
+
+  .dropzone {
+    position: relative; min-height: 230px; border: 2px dashed #3a4763; border-radius: 10px;
+    display: flex; align-items: center; justify-content: center; text-align: center;
+    cursor: pointer; overflow: hidden; transition: border-color .15s, background .15s;
+    background-image: conic-gradient(#2a3140 0 25%, #222836 0 50%, #2a3140 0 75%, #222836 0);
+    background-size: 18px 18px;
+  }
+  .dropzone:hover { border-color: #4a5b85; }
+  .dropzone.dragover { border-color: var(--accent); background-color: rgba(79, 140, 255, .08); }
+  .dz-hint { color: var(--text-dim); padding: 20px; pointer-events: none; }
+  .dz-hint .dz-icon { font-size: 40px; margin-bottom: 8px; }
+  .dz-hint .dz-sub { font-size: 12px; margin-top: 4px; opacity: .8; }
+  .thumb { max-width: 100%; max-height: 210px; object-fit: contain; display: block; }
+
+  .btn-row { display: flex; gap: 8px; margin: 12px 0 10px; flex-wrap: wrap; }
+  .btn {
+    font: inherit; font-size: 13px; color: var(--text); cursor: pointer;
+    background: #232c42; border: 1px solid var(--card-border); border-radius: 8px;
+    padding: 7px 14px; transition: filter .15s, transform .05s;
+  }
+  .btn:hover { filter: brightness(1.2); }
+  .btn:active { transform: translateY(1px); }
+  .btn:disabled { opacity: .5; cursor: not-allowed; }
+  .btn-ghost { background: transparent; }
+  .path-input {
+    width: 100%; font: inherit; font-size: 13px; color: var(--text);
+    background: #0f1524; border: 1px solid var(--card-border); border-radius: 8px;
+    padding: 8px 12px; outline: none; font-family: Consolas, "Courier New", monospace;
+  }
+  .path-input:focus { border-color: var(--accent); }
+  .status-line { font-size: 12px; color: var(--text-dim); margin-top: 8px; }
+  .status-line.ok { color: var(--ok); }
+
+  /* ---------- 参数与控制 ---------- */
+  .controls {
+    display: flex; align-items: center; gap: 18px; flex-wrap: wrap;
+    margin-bottom: 18px;
+  }
+  .controls label { font-size: 13px; color: var(--text-dim); display: flex; align-items: center; gap: 8px; }
+  .num-input, .sel-input {
+    font: inherit; font-size: 13px; color: var(--text); background: #0f1524;
+    border: 1px solid var(--card-border); border-radius: 8px; padding: 7px 10px; outline: none;
+  }
+  .num-input { width: 76px; text-align: center; }
+  .num-input:focus, .sel-input:focus { border-color: var(--accent); }
+  .check-label {
+    display: inline-flex; align-items: center; gap: 7px; font-size: 13px;
+    color: var(--text); cursor: pointer; user-select: none;
+  }
+  .check-label input { width: 15px; height: 15px; accent-color: var(--accent); cursor: pointer; }
+  .range-input {
+    -webkit-appearance: none; appearance: none; width: 130px; height: 5px;
+    border-radius: 3px; background: #2a3550; outline: none; cursor: pointer;
+  }
+  .range-input::-webkit-slider-thumb {
+    -webkit-appearance: none; appearance: none; width: 15px; height: 15px;
+    border-radius: 50%; background: var(--accent); cursor: pointer;
+    box-shadow: 0 0 6px rgba(79, 140, 255, .5);
+  }
+  .range-input::-moz-range-thumb {
+    width: 15px; height: 15px; border: none; border-radius: 50%;
+    background: var(--accent); cursor: pointer;
+  }
+  .range-input:focus { border-color: var(--accent); }
+  .range-val {
+    font-size: 12px; font-weight: 700; color: var(--accent);
+    min-width: 38px; text-align: right; font-variant-numeric: tabular-nums;
+  }
+  /* 半透明归因开启时无效的控件（羽化 / 预览原色图） */
+  .ctl-off { opacity: .38; }
+  .ctl-off input, .ctl-off select { cursor: not-allowed; }
+  .exp-tag {
+    font-size: 10px; font-weight: 700; padding: 1px 5px; border-radius: 5px;
+    color: #ffcf7a; background: rgba(255, 176, 32, .14);
+    border: 1px solid rgba(255, 176, 32, .38); margin-left: 2px;
+  }
+  .warn-line {
+    flex-basis: 100%; width: 100%; font-size: 12px; line-height: 1.6;
+    color: #ffc36b; background: rgba(255, 176, 32, .09);
+    border: 1px solid rgba(255, 176, 32, .3); border-left: 3px solid #ffb020;
+    border-radius: 8px; padding: 8px 12px;
+  }
+  .hint { font-size: 12px; color: var(--text-dim); }
+  .btn-large {
+    font-size: 15px; font-weight: 600; padding: 11px 30px; border: none; border-radius: 10px;
+    color: #fff; background: linear-gradient(135deg, var(--accent), var(--accent-2));
+    display: inline-flex; align-items: center; gap: 9px; margin-left: auto;
+  }
+  .btn-large:hover { filter: brightness(1.12); }
+  .spinner {
+    width: 15px; height: 15px; border: 2px solid rgba(255, 255, 255, .35);
+    border-top-color: #fff; border-radius: 50%; animation: spin .7s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ---------- 结果区 ---------- */
+  .result-head { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; margin-bottom: 14px; }
+  .result-head h2 { font-size: 17px; }
+  .bg-toggle { display: flex; gap: 6px; }
+  .bg-toggle button {
+    font: inherit; font-size: 12px; color: var(--text-dim); cursor: pointer;
+    background: #0f1524; border: 1px solid var(--card-border); border-radius: 7px; padding: 5px 12px;
+  }
+  .bg-toggle button.active { color: #fff; border-color: var(--accent); background: rgba(79, 140, 255, .15); }
+
+  .preview-box {
+    border: 1px solid var(--card-border); border-radius: 10px;
+    overflow: hidden; padding: 0; position: relative;
+  }
+  .preview-viewport {
+    height: 480px; overflow: hidden; position: relative;
+    display: flex; align-items: center; justify-content: center;
+    cursor: grab; touch-action: none; user-select: none;
+  }
+  .preview-viewport.dragging { cursor: grabbing; }
+  .preview-viewport canvas {
+    display: block; transform-origin: center center; will-change: transform;
+    flex: none;
+  }
+  #previewBox[data-bg="checker"] .preview-viewport {
+    background-image: conic-gradient(#c9ced8 0 25%, #f4f6fa 0 50%, #c9ced8 0 75%, #f4f6fa 0);
+    background-size: 20px 20px;
+  }
+  #previewBox[data-bg="black"] .preview-viewport { background: #000; }
+  #previewBox[data-bg="white"] .preview-viewport { background: #fff; }
+  #previewBox[data-bg="gray"]  .preview-viewport { background: #7f7f7f; }
+  .preview-error {
+    position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    color: var(--err); font-size: 13px; background: rgba(13, 18, 32, .85);
+  }
+  .preview-toolbar {
+    display: flex; align-items: center; gap: 8px; margin: 10px 0 2px; flex-wrap: wrap;
+  }
+  .preview-toolbar .btn { min-width: 36px; padding: 5px 12px; }
+  .zoom-label {
+    font-size: 13px; color: var(--text); min-width: 52px; text-align: center;
+    font-variant-numeric: tabular-nums;
+  }
+  .preview-toolbar .hint { margin-left: auto; }
+
+  .stats { display: flex; flex-wrap: wrap; gap: 8px; margin: 14px 0; }
+  .chip {
+    background: #0f1524; border: 1px solid var(--card-border); border-radius: 8px;
+    padding: 6px 12px; font-size: 12px; color: var(--text-dim);
+    font-variant-numeric: tabular-nums;
+  }
+  .chip b { color: var(--text); font-weight: 600; margin-left: 4px; }
+
+  .save-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .save-label { font-size: 13px; color: var(--text-dim); flex: none; }
+  .save-row .path-input { flex: 1; min-width: 220px; }
+  .btn-save {
+    font-size: 14px; font-weight: 600; padding: 9px 22px; border: none; border-radius: 9px;
+    color: #fff; background: linear-gradient(135deg, #1f9d6b, #34c98e);
+  }
+  .btn-save:hover { filter: brightness(1.12); }
+  .btn-save:disabled { opacity: .5; cursor: not-allowed; }
+  .last-saved { font-size: 12px; color: var(--ok); margin-top: 10px; word-break: break-all; }
+
+  footer { margin-top: 26px; font-size: 12px; color: var(--text-dim); line-height: 1.9; }
+  footer b { color: #b9c2d6; }
+
+  /* ---------- Toast ---------- */
+  #toastRoot {
+    position: fixed; top: 18px; right: 18px; z-index: 999;
+    display: flex; flex-direction: column; gap: 10px; max-width: min(420px, 90vw);
+  }
+  .toast {
+    padding: 11px 16px; border-radius: 10px; font-size: 13px; color: #fff;
+    background: #232c42; border: 1px solid var(--card-border);
+    box-shadow: 0 8px 28px rgba(0, 0, 0, .45);
+    opacity: 0; transform: translateX(30px); transition: opacity .25s, transform .25s;
+    word-break: break-all;
+  }
+  .toast.show { opacity: 1; transform: translateX(0); }
+  .toast-success { border-color: rgba(52, 201, 142, .55); }
+  .toast-error { border-color: rgba(255, 95, 107, .55); }
+  .toast-info { border-color: rgba(79, 140, 255, .55); }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <!-- ================= 顶栏 ================= -->
+  <header>
+    <div class="title">
+      <h1><span class="logo">图片差异提取</span> · DiffGet</h1>
+      <p>像素级提取两张图片的差异部分，生成透明背景 PNG</p>
+    </div>
+    <div>
+      <div class="service-pill">
+        <span class="dot" id="statusDot"></span>
+        <span id="statusText">正在连接服务…</span>
+      </div>
+      <div class="service-info" id="statusInfo"></div>
+    </div>
+  </header>
+
+  <!-- ================= 两个图片框 ================= -->
+  <section class="cards">
+    <!-- 图片 A -->
+    <div class="card img-card" data-slot="a">
+      <div class="img-card-head">
+        <div>
+          <h2>提取图片（图片A）</h2>
+          <div class="sub">差异像素的颜色来源</div>
+        </div>
+        <span class="badge" id="badge-a">未加载</span>
+      </div>
+      <div class="dropzone" id="dz-a" title="拖拽图片到此处，或点击选择文件">
+        <img class="thumb" id="thumb-a" alt="图片A缩略图" hidden>
+        <div class="dz-hint" id="hint-a">
+          <div class="dz-icon">🖼️</div>
+          <div>拖拽图片到此处，或点击选择文件</div>
+          <div class="dz-sub">支持 PNG / JPG / BMP / WebP / GIF 等格式</div>
+        </div>
+      </div>
+      <div class="btn-row">
+        <button class="btn" id="pick-a" title="从文件对话框选择图片">选择图片…</button>
+        <button class="btn" id="loadpath-a" title="按下方输入的路径读取图片">载入路径</button>
+        <button class="btn btn-ghost" id="clear-a" title="清除已加载的图片">清除</button>
+        <input type="file" accept="image/*" id="file-a" hidden>
+      </div>
+      <input type="text" class="path-input" id="path-a" placeholder="或手动输入本地路径，如 E:\pic\a.png" spellcheck="false" title="输入图片的完整本地路径后回车或点“载入路径”">
+      <div class="status-line" id="status-a">未加载</div>
+    </div>
+
+    <!-- 图片 B -->
+    <div class="card img-card" data-slot="b">
+      <div class="img-card-head">
+        <div>
+          <h2>背景图片（图片B）</h2>
+          <div class="sub">对比基准</div>
+        </div>
+        <span class="badge" id="badge-b">未加载</span>
+      </div>
+      <div class="dropzone" id="dz-b" title="拖拽图片到此处，或点击选择文件">
+        <img class="thumb" id="thumb-b" alt="图片B缩略图" hidden>
+        <div class="dz-hint" id="hint-b">
+          <div class="dz-icon">🖼️</div>
+          <div>拖拽图片到此处，或点击选择文件</div>
+          <div class="dz-sub">支持 PNG / JPG / BMP / WebP / GIF 等格式</div>
+        </div>
+      </div>
+      <div class="btn-row">
+        <button class="btn" id="pick-b" title="从文件对话框选择图片">选择图片…</button>
+        <button class="btn" id="loadpath-b" title="按下方输入的路径读取图片">载入路径</button>
+        <button class="btn btn-ghost" id="clear-b" title="清除已加载的图片">清除</button>
+        <input type="file" accept="image/*" id="file-b" hidden>
+      </div>
+      <input type="text" class="path-input" id="path-b" placeholder="或手动输入本地路径，如 E:\pic\b.png" spellcheck="false" title="输入图片的完整本地路径后回车或点“载入路径”">
+      <div class="status-line" id="status-b">未加载</div>
+    </div>
+  </section>
+
+  <!-- ================= 参数与提取按钮 ================= -->
+  <section class="card controls">
+    <label for="tolerance">容差
+      <input type="number" class="num-input" id="tolerance" value="0" min="0" max="255" step="1" title="任一通道差值大于该值才算差异">
+      <span class="hint">0 = 任何像素差异都提取</span>
+    </label>
+    <label for="source">取色来源
+      <select class="sel-input" id="source" title="差异像素取哪张图的颜色">
+        <option value="a" selected>提取图片（A）</option>
+        <option value="b">背景图片（B）</option>
+      </select>
+    </label>
+    <label for="feather" id="featherLabel">边缘羽化
+      <select class="sel-input" id="feather" title="对差异掩码的边界外侧做 alpha 渐变，让素材放到新背景上时边缘自然过渡（消除硬边锯齿）。掩码内部始终为不透明原色，故叠回原底图仍逐像素精确还原来源图。0 = 不羽化（硬边）。仅「原色提取 + 羽化」模式有效">
+        <option value="0">关闭（硬边）</option>
+        <option value="1" selected>羽化 1px（推荐）</option>
+        <option value="2">羽化 2px</option>
+        <option value="3">羽化 3px</option>
+      </select>
+    </label>
+    <label for="despeckle" id="despeckleLabel" title="仅「半透明归因」开启时生效：抑制 un-blending 反解把噪点放大形成的彩色杂点">
+      杂色抑制
+      <select class="sel-input" id="despeckle" title="仅「半透明归因」开启时生效：抑制 un-blending 反解把噪点放大形成的彩色杂点">
+        <option value="0">关闭</option>
+        <option value="1" selected>标准</option>
+        <option value="2">强</option>
+      </select>
+    </label>
+    <label class="check-label" for="cornerMarkers" title="在生成图片的四角绘制纯红定位像素，便于在 Photoshop 中定位画布位置（选中标记即可确定边界）">
+      <input type="checkbox" id="cornerMarkers" checked> 四角定位像素
+    </label>
+    <label class="check-label" for="plainView" id="plainViewLabel" title="预览时切换显示：不勾选显示「羽化素材图层」（用于放到新背景），勾选显示「原色提取图」（硬边、仅原色）。两者保存时都会输出。仅「原色提取 + 羽化」模式有效">
+      <input type="checkbox" id="plainView"> 预览原色图
+    </label>
+    <label class="check-label" for="semiAttribution" title="旧版算法（un-blending 反解）：把两张图的差异归因于半透明度，直接输出带 alpha 值的透明 PNG，放到新背景上即得目标图。对不透明源图可能产生边缘彩色杂色。关闭时使用「原色提取 + 边缘羽化」：叠回原底图逐像素精确还原来源图，不产生杂色">
+      <input type="checkbox" id="semiAttribution"> 半透明归因 <b class="exp-tag">旧版算法</b>
+    </label>
+    <div class="warn-line" id="semiWarn" hidden>
+      ⚠ 已切回旧版 un-blending。两条必读：<br>
+      <b>① 务必保持 100% 尺寸，绝对不要缩放这个图层。</b>该图层含 42,632 个「alpha&lt;16 却彩度≥200」
+      的像素（占可见像素 11.6%），一旦被缩放到别的画布尺寸，这些极端色会经插值渗进邻居，
+      <b>凭空产生两源都没有的彩色杂点</b>（实测仅缩放到 2730×1536 就多出 2,931 个这样的像素）。
+      正确做法：在 PS 里<b>直接打开「提取图片」作为画布</b>（尺寸就是 1920×1080），再把图层拖进去。
+      四角红色定位像素就是给你核对尺寸/对齐用的。<br>
+      <b>② 叠加回原底图是精确的</b>（实测误差 max 2.36）。彩点只在换到<b>别的</b>背景时才显形，
+      这时用「透明判定」滑块抬高 alpha（沿精确解族，无损），而不是删像素。
+    </div>
+    <label class="check-label" id="transparencyRow" hidden for="transparency" title="0% = 差异全部视为内容变化（输出不透明原色）；100% = 差异全部归因于半透明度（输出带 alpha 的透明 PNG，即旧版效果）；中间值沿精确 alpha 解族插值，叠加底图仍能还原来源图">
+      透明判定
+      <input type="range" class="range-input" id="transparency" min="0" max="100" step="1" value="100">
+      <span class="range-val" id="transparencyVal">100%</span>
+      <span class="hint">0=内容变化 · 100=半透明（旧版）</span>
+    </label>
+    <button class="btn btn-large" id="btnExtract" title="开始比较两张图片并提取差异">
+      <span class="spinner" id="extractSpinner" hidden></span>
+      <span id="extractLabel">⚡ 开始提取</span>
+    </button>
+  </section>
+
+  <!-- ================= 保存区（常驻可见，提取后启用） ================= -->
+  <section class="card save-card" id="saveCard">
+    <div class="save-row">
+      <span class="save-label">保存结果</span>
+      <input type="text" class="path-input" id="saveName" placeholder="保存文件名（提取成功后自动生成）" spellcheck="false" title="保存到 out 目录的文件名">
+      <button class="btn btn-save" id="btnSave" disabled title="请先执行提取，即可保存结果到 out 目录">💾 保存到 out 目录</button>
+      <button class="btn" id="btnOpenOut" title="在文件管理器中打开 out 目录">打开 out 目录</button>
+    </div>
+    <div class="last-saved" id="lastSaved" hidden></div>
+  </section>
+
+  <!-- ================= 结果区 ================= -->
+  <section class="card" id="resultSection" hidden>
+    <div class="result-head">
+      <h2>提取结果预览</h2>
+      <div class="bg-toggle" id="bgToggle">
+        <button data-bg="checker" class="active" title="棋盘格背景（便于观察透明区域）">棋盘格</button>
+        <button data-bg="black" title="纯黑背景">纯黑</button>
+        <button data-bg="white" title="纯白背景">纯白</button>
+        <button data-bg="gray" title="纯灰背景">纯灰</button>
+      </div>
+    </div>
+    <div class="preview-box" id="previewBox" data-bg="checker">
+      <div class="preview-viewport" id="previewViewport" title="滚轮缩放 · 拖动平移 · 双击复位">
+        <canvas id="resultCanvas" title="差异提取结果（随透明判定实时插值）"></canvas>
+      </div>
+      <div class="preview-error" id="previewError" hidden>预览渲染失败，请重新提取</div>
+    </div>
+    <div class="preview-toolbar">
+      <button class="btn btn-ghost" id="zoomOut" title="缩小">－</button>
+      <span class="zoom-label" id="zoomLabel">100%</span>
+      <button class="btn btn-ghost" id="zoomIn" title="放大">＋</button>
+      <button class="btn btn-ghost" id="zoomFit" title="缩放至适应窗口">适应窗口</button>
+      <button class="btn btn-ghost" id="zoomReset" title="复位到 100% 并居中">100%</button>
+      <span class="hint">滚轮缩放 · 拖动平移 · 双击复位</span>
+    </div>
+    <div class="stats">
+      <span class="chip">输出尺寸<b id="statSize">-</b></span>
+      <span class="chip">差异像素<b id="statDiff">-</b></span>
+      <span class="chip">差异占比<b id="statRatio">-</b></span>
+      <span class="chip">耗时<b id="statTime">-</b></span>
+      <span class="chip">计算引擎<b id="statEngine">-</b></span>
+      <span class="chip">差异区域<b id="statBbox">-</b></span>
+      <span class="chip">半透明差异像素<b id="statSemi">-</b></span>
+      <span class="chip">半透明归因<b id="statSemiAttr">关闭</b></span>
+      <span class="chip">文件大小<b id="statSizeFile">-</b></span>
+    </div>
+  </section>
+
+  <!-- ================= 底部说明 ================= -->
+  <footer>
+    <div>· 两张图片支持 <b>拖拽</b>、<b>选择文件</b>、<b>手动输入本地路径</b> 三种方式确定路径。</div>
+    <div>· 提取结果默认保存在<b>缓存目录</b>，<b>7 天后自动删除</b>；点击「保存到 out 目录」后永久保存到 <b>out</b> 目录。</div>
+    <div>· 容差为 0 时，任何一个像素通道存在差异即被提取；调大容差可忽略轻微噪点。</div>
+    <div>· <b>预览操作</b>：滚轮以光标为中心缩放，拖动平移，双击或点「100%」复位，「适应窗口」一键铺满。</div>
+    <div>· <b>算法（默认）</b>：差异像素取<b>取色来源的原始颜色</b>、alpha=255；来源像素自身是半透明（alpha 在 1-254）时保留其原始 alpha；来源像素 alpha=0 时输出 alpha=0。把结果按 alpha 叠加到底图上<b>逐像素精确等于提取图片</b>（误差为 0），因此不可能产生杂色。</div>
+    <div>· <b>边缘羽化</b>：默认 <b>1px</b>。在差异掩码的<b>边界外侧</b>生成 alpha 渐变（颜色按精确解族反解），因此素材放到<b>新背景</b>上时边缘自然过渡、不再出现硬边锯齿；同时叠回<b>原底图</b>仍逐像素精确还原目标图。设为 <b>0</b> 则完全硬边。注意：羽化的数学前提是「掩码外侧像素在两图中的颜色一致」，故它只改变边缘过渡，不会在内容区产生杂色。</div>
+    <div>· <b>半透明像素</b>：alpha 在 1-254 之间的像素判定为半透明，提取后<b>保留其原始透明度</b>；两图都全透明（alpha=0）的像素视为相同，其 RGB 不参与比较。</div>
+    <div>· <b>半透明归因（旧版算法，可选，默认关闭）</b>：开启后回到最初的 un-blending 路径——直接输出<b>带 alpha 值的透明 PNG</b>（正是最早那版的效果），求解每像素 (alpha, 真实色) 使提取物叠加底图后还原来源图。代价是该解法对<b>不透明源图</b>（如普通截图）会强行反解出“极小 alpha + 极端颜色”，边缘出现彩色杂色。开启后出现「透明判定」滑块（默认 100% = 完全归因半透明），且需<b>重新点一次「开始提取」</b>方才生效；开启时的“杂色抑制”仅对该路径生效。</div>
+    <div>· <b>四角定位像素</b>：默认在生成图片四角绘制纯红实心标记，便于在 Photoshop 中定位画布（选中标记即知边界）；不需要时取消勾选即可。</div>
+  </footer>
+</div>
+
+<div id="toastRoot"></div>
+
+<script>
+"use strict";
+
+/* ================= 全局状态 ================= */
+const state = { a: null, b: null, result: null };
+
+/* ================= 工具函数 ================= */
+const $ = (id) => document.getElementById(id);
+
+async function api(url, body) {
+  let res;
+  try {
+    res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body || {})
+    });
+  } catch (e) {
+    throw new Error("无法连接到服务，请确认程序已启动（双击 run.bat）");
+  }
+  let data = {};
+  try { data = await res.json(); } catch (e) { /* 保留空对象 */ }
+  if (!res.ok || data.ok === false) {
+    throw new Error(data.error || "请求失败（HTTP " + res.status + "）");
+  }
+  return data;
+}
+
+function toast(message, type, duration) {
+  type = type || "info";
+  duration = duration || 3000;
+  const el = document.createElement("div");
+  el.className = "toast toast-" + type;
+  el.textContent = message;
+  $("toastRoot").appendChild(el);
+  requestAnimationFrame(() => el.classList.add("show"));
+  setTimeout(() => {
+    el.classList.remove("show");
+    setTimeout(() => el.remove(), 300);
+  }, duration);
+}
+
+function formatBytes(n) {
+  if (n < 1024) return n + " B";
+  if (n < 1024 * 1024) return (n / 1024).toFixed(1) + " KB";
+  return (n / 1024 / 1024).toFixed(2) + " MB";
+}
+
+function engineText(j) {
+  if (j.engine === "multiprocess") return "多进程 × " + j.workers + " 核";
+  if (j.engine === "single(fallback)") return "单进程（并行回退）";
+  return "单进程";
+}
+
+function defaultSaveName() {
+  const now = new Date();
+  const pad = (n) => String(n).padStart(2, "0");
+  return "diff_" + now.getFullYear() + pad(now.getMonth() + 1) + pad(now.getDate()) +
+         "_" + pad(now.getHours()) + pad(now.getMinutes()) + pad(now.getSeconds()) + ".png";
+}
+
+/* ================= 图片槽位管理 ================= */
+function setSlot(slot, src) {
+  state[slot] = src; // {type, value, name, width, height, preview}
+  const thumb = $("thumb-" + slot);
+  const hint = $("hint-" + slot);
+  const status = $("status-" + slot);
+  const badge = $("badge-" + slot);
+  if (src) {
+    thumb.src = src.preview;
+    thumb.hidden = false;
+    hint.hidden = true;
+    status.textContent = "已加载：" + src.name + " · " + src.width + "×" + src.height;
+    status.className = "status-line ok";
+    badge.textContent = "已加载";
+    badge.className = "badge ok";
+  } else {
+    thumb.hidden = true;
+    thumb.removeAttribute("src");
+    hint.hidden = false;
+    status.textContent = "未加载";
+    status.className = "status-line";
+    badge.textContent = "未加载";
+    badge.className = "badge";
+  }
+}
+
+/* 文件选择 / 拖拽 → data URL */
+function handleFile(slot, file) {
+  if (!file) return;
+  if (!file.type || !file.type.startsWith("image/")) {
+    toast("请选择图片文件（PNG / JPG / BMP / WebP / GIF 等）", "error");
+    return;
+  }
+  const reader = new FileReader();
+  reader.onload = () => {
+    const dataUrl = reader.result;
+    const probe = new Image();
+    probe.onload = () => {
+      setSlot(slot, {
+        type: "data", value: dataUrl, name: file.name,
+        width: probe.naturalWidth, height: probe.naturalHeight, preview: dataUrl
+      });
+    };
+    probe.onerror = () => toast("图片解析失败，文件可能已损坏", "error");
+    probe.src = dataUrl;
+  };
+  reader.onerror = () => toast("文件读取失败", "error");
+  reader.readAsDataURL(file);
+}
+
+/* 手动路径 → /api/load 校验并取预览 */
+async function loadPath(slot) {
+  const input = $("path-" + slot);
+  const path = input.value.trim();
+  if (!path) { toast("请先输入图片路径", "error"); return; }
+  try {
+    const j = await api("/api/load", { path: path });
+    setSlot(slot, {
+      type: "path", value: path, name: j.name,
+      width: j.width, height: j.height, preview: j.preview
+    });
+  } catch (e) {
+    toast(e.message, "error");
+  }
+}
+
+/* ================= 拖拽与文件选择 ================= */
+function wireSlot(slot) {
+  const dz = $("dz-" + slot);
+  ["dragenter", "dragover"].forEach((ev) =>
+    dz.addEventListener(ev, (e) => {
+      e.preventDefault(); e.stopPropagation();
+      dz.classList.add("dragover");
+    })
+  );
+  ["dragleave", "drop"].forEach((ev) =>
+    dz.addEventListener(ev, (e) => {
+      e.preventDefault(); e.stopPropagation();
+      dz.classList.remove("dragover");
+    })
+  );
+  dz.addEventListener("drop", (e) => {
+    const file = e.dataTransfer.files && e.dataTransfer.files[0];
+    handleFile(slot, file);
+  });
+  dz.addEventListener("click", () => $("file-" + slot).click());
+  $("pick-" + slot).addEventListener("click", () => $("file-" + slot).click());
+  $("file-" + slot).addEventListener("change", (e) => {
+    handleFile(slot, e.target.files[0]);
+    e.target.value = "";
+  });
+  $("loadpath-" + slot).addEventListener("click", () => loadPath(slot));
+  $("clear-" + slot).addEventListener("click", () => {
+    setSlot(slot, null);
+    $("path-" + slot).value = "";
+  });
+  $("path-" + slot).addEventListener("keydown", (e) => {
+    if (e.key === "Enter") loadPath(slot);
+  });
+}
+
+/* 阻止浏览器默认拖放行为（避免拖进来的图片被浏览器直接打开） */
+["dragover", "drop"].forEach((ev) =>
+  window.addEventListener(ev, (e) => e.preventDefault())
+);
+
+/* ================= 提取 ================= */
+/* ================= 关键帧与实时插值预览 =================
+   提取时服务端预存两份关键帧与两份渲染辅助图：
+     K0（透明判定=0）：差异视为内容变化（不透明提取）
+     K1（透明判定=1）：差异完全归因于透明度（叠加底图后还原提取图）
+     S / O：来源覆盖到底图后的外观 RGB、底图 RGB（精确 alpha 解族所需）
+   中间判定值 t 不对 RGBA 直接线性插值（那会让颜色偏离精确解族，
+   叠加回底图后无法还原来源图），而是沿「精确 alpha 解族」渲染：
+     at255 = max(a0*(1-t) + a1*t, a1 + 0.5)
+     C     = O + (S - O) / (at255/255)
+   解族中任意 alpha 都满足 alpha*C + (1-alpha)*O = S，
+   因此叠加底图后精确还原来源图，且与 t 的取值无关。
+   exact 像素 = K1 的 alpha > 0（真实差异且已解出最小 alpha）；
+   K1 alpha=0 的像素（无差异 / 微差异置空）回退线性插值。
+   alpha 低于解族下限时反解颜色会越界，故钳到 a1+0.5（含半阶量化余量）。
+   浏览器预览与「保存到 out」使用同一公式、同一取整（floor(x+0.5)），
+   因此同一 t 下预览与导出逐像素一致。                                */
+const kf = { k0: null, k1: null, s: null, o: null, w: 0, h: 0, loaded: false };
+
+function loadImage(src) {
+  return new Promise((resolve, reject) => {
+    const im = new Image();
+    im.onload = () => resolve(im);
+    im.onerror = () => reject(new Error("图片加载失败"));
+    im.src = src;
+  });
+}
+
+async function loadKeyframes(urls, auxUrls) {
+  const imgs = await Promise.all([
+    loadImage(urls[0]), loadImage(urls[1]),
+    ...(auxUrls ? [loadImage(auxUrls[0]), loadImage(auxUrls[1])] : [])
+  ]);
+  const im0 = imgs[0], im1 = imgs[1], ims = imgs[2], imo = imgs[3];
+  // 全分辨率载入两个关键帧：预览与导出走同一数据路径（先缩放再插值会因
+  // 浏览器的缩放滤波与全分辨率结果产生可见差异，尤其是细结构与半透明像素）
+  kf.w = im0.naturalWidth;
+  kf.h = im0.naturalHeight;
+  kf.k0 = null;
+  kf.k1 = null;
+  kf.s = null;
+  kf.o = null;
+  if ([im1, ims, imo].filter(Boolean).some(im => im.naturalWidth !== kf.w || im.naturalHeight !== kf.h))
+    throw new Error("关键帧与渲染数据尺寸不一致");
+  const ctxs = [];
+  for (const im of [im0, im1, ...(ims ? [ims, imo] : [])]) {
+    const cv = document.createElement("canvas");
+    cv.width = kf.w;
+    cv.height = kf.h;
+    cv.getContext("2d").drawImage(im, 0, 0);
+    ctxs.push(cv);
+  }
+  kf.k0 = ctxs[0];
+  kf.k1 = ctxs[1];
+  kf.s = ims ? ctxs[2] : null;
+  kf.o = imo ? ctxs[3] : null;
+  kf.loaded = true;
+}
+
+function semiAttrOn() {
+  const el = $("semiAttribution");
+  return !!(el && el.checked);
+}
+
+/* 「透明判定」滑块：仅「半透明归因」（旧版 un-blending）开启时显示并使用。
+   0 = 差异视为内容变化（K0 原色提取），100 = 差异归因于半透明度（K1 un-blending）。 */
+function transparencyValue() {
+  const el = $("transparency");
+  return el ? (parseInt(el.value, 10) || 0) : 100;
+}
+
+/* 「查看原色图」：预览 K0（硬边原色提取）而不是 K1（羽化素材图层）。 */
+function plainViewOn() {
+  const el = $("plainView");
+  return !!(el && el.checked);
+}
+
+/* 半透明归因开关联动：显示/隐藏「透明判定」滑块与「二次清理」，置灰羽化与
+   「预览原色图」（这几项在旧版 un-blending 路径下不生效：K1 由反解得到，
+   与羽化无关；原色图预览由「透明判定」滑到 0% 即可看到）。 */
+function updateSemiUI() {
+  const on = semiAttrOn();
+  $("semiWarn").hidden = !on;
+  $("transparencyRow").hidden = !on;
+  $("featherLabel").classList.toggle("ctl-off", on);
+  $("plainViewLabel").classList.toggle("ctl-off", on);
+  $("feather").disabled = on;
+  $("plainView").disabled = on;
+  $("statSemiAttr").textContent = on ? "开启（旧版）" : "关闭";
+  if (on) {
+    $("transparencyVal").textContent = transparencyValue() + "%";
+  }
+}
+
+function renderPreview() {
+  if (!kf.loaded) return;
+  // 默认路径：K0 = 原色提取图（硬边），K1 = 羽化素材图层；
+  // 「查看原色图」勾选时预览 K0，否则预览 K1（默认，用于换背景）。
+  const t = semiAttrOn() ? (transparencyValue() / 100) : (plainViewOn() ? 0 : 1);
+  const cv = $("resultCanvas");
+  cv.width = kf.w;
+  cv.height = kf.h;
+  const ctx = cv.getContext("2d");
+  const imgData = ctx.createImageData(kf.w, kf.h);
+  const out = imgData.data;
+  const g0 = kf.k0.getContext("2d");
+  const g1 = kf.k1.getContext("2d");
+  const gs = kf.s ? kf.s.getContext("2d") : null;
+  const go = kf.o ? kf.o.getContext("2d") : null;
+  if (t <= 0) {
+    out.set(g0.getImageData(0, 0, kf.w, kf.h).data);
+  } else if (t >= 1) {
+    out.set(g1.getImageData(0, 0, kf.w, kf.h).data);
+  } else {
+    const d0 = g0.getImageData(0, 0, kf.w, kf.h).data;
+    const d1 = g1.getImageData(0, 0, kf.w, kf.h).data;
+    const ds = gs ? gs.getImageData(0, 0, kf.w, kf.h).data : null;
+    const dob = go ? go.getImageData(0, 0, kf.w, kf.h).data : null;
+    // 与服务端 diff_core.interpolate_keyframes 完全同公式、同标度、同取整：
+    //   exact 像素（K1 的 alpha > 0，即真实差异且已解出最小 alpha）
+    //     at255 = max(a0*(1-t) + a1*t, a1 + 0.5)   // 钳到解族下限（含半阶量化余量）
+    //     C     = O + (S - O) / (at255/255)
+    //   其余像素（无差异 / 微差异置空）回退 RGBA 线性插值。
+    // alpha 全程在 0-255 标度上运算，取整统一 floor(x+0.5)，
+    // 因此预览与「保存到 out」逐像素一致，且叠加底图精确还原提取图。
+    const omt = 1 - t;
+    for (let i = 0; i < out.length; i += 4) {
+      const a1 = d1[i + 3];
+      if (ds && dob && a1 > 0) {
+        const a0 = d0[i + 3];
+        let at255 = a0 * omt + a1 * t;
+        if (at255 < a1 + 0.5) at255 = a1 + 0.5;
+        if (at255 > 255) at255 = 255;   // 与后端一致：防止 256 回绕/溢出
+        const at = at255 / 255;
+        for (let c = 0; c < 3; c++) {
+          const o = dob[i + c], s = ds[i + c];
+          let v = o + (s - o) / at;
+          v = v < 0 ? 0 : (v > 255 ? 255 : v);
+          out[i + c] = Math.floor(v + 0.5);
+        }
+        out[i + 3] = Math.floor(at255 + 0.5);
+      } else {
+        for (let c = 0; c < 4; c++) {
+          out[i + c] = Math.floor(d0[i + c] * omt + d1[i + c] * t + 0.5);
+        }
+      }
+    }
+  }
+  ctx.putImageData(imgData, 0, 0);
+  // 四角定位像素（与原图同尺寸绘制，与导出结果完全一致）
+  if ($("cornerMarkers").checked && state.result) {
+    const ms = Math.min(4, kf.w, kf.h);
+    if (ms > 0) {
+      ctx.fillStyle = "#ff0000";
+      for (const y0 of [0, kf.h - ms]) {
+        for (const x0 of [0, kf.w - ms]) {
+          ctx.fillRect(x0, y0, ms, ms);
+        }
+      }
+    }
+  }
+  fitIfNeeded();
+}
+
+let _previewRaf = 0;
+function schedulePreview() {
+  if (_previewRaf) return;
+  _previewRaf = requestAnimationFrame(() => { _previewRaf = 0; renderPreview(); });
+}
+
+/* ================= 预览缩放 / 拖动 ================= */
+const zoom = { z: 1, tx: 0, ty: 0, fit: true };
+const ZOOM_MIN = 0.05, ZOOM_MAX = 16;
+
+function applyZoom() {
+  const cv = $("resultCanvas");
+  cv.style.transform = "translate(" + zoom.tx + "px, " + zoom.ty + "px) scale(" + zoom.z + ")";
+  $("zoomLabel").textContent = Math.round(zoom.z * 100) + "%";
+}
+
+function zoomAt(factor, cx, cy) {
+  const rect = $("previewViewport").getBoundingClientRect();
+  const ox = rect.width / 2, oy = rect.height / 2;
+  const z2 = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, zoom.z * factor));
+  // 保持光标下的画布点不动：final = O + z*(p-O) + t
+  zoom.tx = cx - ox - (z2 / zoom.z) * (cx - ox - zoom.tx);
+  zoom.ty = cy - oy - (z2 / zoom.z) * (cy - oy - zoom.ty);
+  zoom.z = z2;
+  zoom.fit = false;
+  applyZoom();
+}
+
+function zoomCenter(factor) {
+  const rect = $("previewViewport").getBoundingClientRect();
+  zoomAt(factor, rect.width / 2, rect.height / 2);
+}
+
+function fitIfNeeded() {
+  if (!zoom.fit || !kf.loaded) return;
+  const rect = $("previewViewport").getBoundingClientRect();
+  if (rect.width < 2 || rect.height < 2) return;
+  const z = Math.min(rect.width / kf.w, rect.height / kf.h);
+  zoom.z = Math.min(Math.max(z, ZOOM_MIN), 4);  // 适应窗口（最高4倍，超出可手动放大）
+  zoom.tx = 0;
+  zoom.ty = 0;
+  applyZoom();
+}
+
+function zoomFit() {
+  const rect = $("previewViewport").getBoundingClientRect();
+  if (!kf.loaded || rect.width < 2) return;
+  zoom.z = Math.min(Math.max(Math.min(rect.width / kf.w, rect.height / kf.h), ZOOM_MIN), 4);
+  zoom.tx = 0;
+  zoom.ty = 0;
+  zoom.fit = true;
+  applyZoom();
+}
+
+function zoomReset() {
+  zoom.z = 1;
+  zoom.tx = 0;
+  zoom.ty = 0;
+  zoom.fit = false;
+  applyZoom();
+}
+
+function wireZoom() {
+  const vp = $("previewViewport");
+  // 滚轮缩放（以光标为中心）
+  vp.addEventListener("wheel", (e) => {
+    if (!state.result) return;
+    e.preventDefault();
+    const rect = vp.getBoundingClientRect();
+    zoomAt(Math.exp(-e.deltaY * 0.0015), e.clientX - rect.left, e.clientY - rect.top);
+  }, { passive: false });
+  // 指针拖动平移
+  let panning = null;
+  vp.addEventListener("pointerdown", (e) => {
+    if (!state.result) return;
+    panning = { x: e.clientX, y: e.clientY, tx: zoom.tx, ty: zoom.ty };
+    vp.setPointerCapture(e.pointerId);
+    vp.classList.add("dragging");
+  });
+  vp.addEventListener("pointermove", (e) => {
+    if (!panning) return;
+    zoom.tx = panning.tx + (e.clientX - panning.x);
+    zoom.ty = panning.ty + (e.clientY - panning.y);
+    zoom.fit = false;
+    applyZoom();
+  });
+  const endPan = () => { panning = null; vp.classList.remove("dragging"); };
+  vp.addEventListener("pointerup", endPan);
+  vp.addEventListener("pointercancel", endPan);
+  // 双击复位
+  vp.addEventListener("dblclick", zoomReset);
+  // 工具栏按钮
+  $("zoomIn").addEventListener("click", () => zoomCenter(1.25));
+  $("zoomOut").addEventListener("click", () => zoomCenter(1 / 1.25));
+  $("zoomFit").addEventListener("click", zoomFit);
+  $("zoomReset").addEventListener("click", zoomReset);
+  // 窗口尺寸变化时若处于适应模式则重新适应
+  window.addEventListener("resize", () => { if (zoom.fit) zoomFit(); });
+}
+
+async function doExtract() {
+  if (!state.a) { toast("请先加载「提取图片（图片A）」", "error"); return; }
+  if (!state.b) { toast("请先加载「背景图片（图片B）」", "error"); return; }
+
+  const btn = $("btnExtract");
+  const spinner = $("extractSpinner");
+  const label = $("extractLabel");
+  btn.disabled = true;
+  spinner.hidden = false;
+  label.textContent = "提取中…";
+
+  try {
+    const tol = parseInt($("tolerance").value, 10);
+    const aa = parseInt($("feather").value, 10);
+    const ds = parseInt($("despeckle").value, 10);
+    const j = await api("/api/extract", {
+      a: { type: state.a.type, value: state.a.value },
+      b: { type: state.b.type, value: state.b.value },
+      tolerance: isNaN(tol) ? 0 : Math.max(0, Math.min(255, tol)),
+      source: $("source").value,
+      feather_radius: isNaN(aa) ? 1 : Math.max(0, Math.min(3, aa)),
+      despeckle: isNaN(ds) ? 1 : Math.max(0, Math.min(2, ds)),
+      semi_attribution: semiAttrOn()
+    });
+    state.result = j;
+    renderResult(j);
+  } catch (e) {
+    toast(e.message, "error");
+  } finally {
+    btn.disabled = false;
+    spinner.hidden = true;
+    label.textContent = "⚡ 开始提取";
+  }
+}
+
+function renderResult(j) {
+  const section = $("resultSection");
+  section.hidden = false;
+  $("previewError").hidden = true;
+
+  $("statSize").textContent = j.width + " × " + j.height;
+  $("statDiff").textContent = Number(j.diff_pixels).toLocaleString();
+  $("statRatio").textContent = (j.ratio * 100).toFixed(2) + "%";
+  $("statTime").textContent = j.elapsed_ms + " ms";
+  $("statEngine").textContent = engineText(j);
+  $("statBbox").textContent = j.bbox
+    ? j.bbox[0] + "," + j.bbox[1] + " ~ " + j.bbox[2] + "," + j.bbox[3]
+    : "无差异";
+  $("statSemi").textContent = j.alpha_breakdown
+    ? Number(j.alpha_breakdown.semi).toLocaleString()
+    : "0";
+  $("statSemiAttr").textContent = j.semi_attribution ? "开启（旧版）" : "关闭";
+  $("statSizeFile").textContent = formatBytes(j.size_bytes);
+  updateSemiUI();
+
+  $("saveName").value = defaultSaveName();
+  $("btnSave").disabled = false;
+
+  // 加载两个关键帧并渲染当前判定值下的预览
+  kf.loaded = false;
+  zoom.fit = true;  // 新结果重新适应窗口
+  loadKeyframes(j.keyframes, j.render_aux).then(renderPreview).catch((e) => {
+    $("previewError").textContent = "预览加载失败：" + e.message;
+    $("previewError").hidden = false;
+  });
+  section.scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+
+/* ================= 保存 ================= */
+async function doSave() {
+  if (!state.result) return;
+  try {
+    const on = semiAttrOn();
+    const t = on ? transparencyValue() : 0;
+    const j = await api("/api/save", {
+      file: state.result.file,
+      name: $("saveName").value.trim(),
+      t: t,
+      semi_attribution: on,
+      corner_markers: $("cornerMarkers").checked
+    });
+    const el = $("lastSaved");
+    el.hidden = false;
+    if (on) {
+      el.textContent = "已保存（旧版 un-blending · 透明判定 " + t + "%）：" + j.saved;
+      toast("已保存到 out 目录：\n· " + j.name + "（半透明归因）\n· " + (j.plain_name || "原色图") + "（原色提取）",
+            "success", 6000);
+    } else {
+      el.textContent = "已保存（羽化素材 + 原色图 两张）：" + j.saved;
+      toast("已保存两张到 out 目录：\n· " + j.name + "（羽化素材）\n· " + (j.plain_name || "原色图") + "（原色提取）",
+            "success", 6000);
+    }
+  } catch (e) {
+    toast(e.message, "error");
+  }
+}
+
+async function openOut() {
+  try {
+    await api("/api/open_out", {});
+  } catch (e) {
+    toast(e.message, "error");
+  }
+}
+
+/* ================= 背景切换 ================= */
+function wireBgToggle() {
+  const preview = $("previewBox");
+  document.querySelectorAll("#bgToggle button").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      document.querySelectorAll("#bgToggle button").forEach((b) => b.classList.remove("active"));
+      btn.classList.add("active");
+      preview.dataset.bg = btn.dataset.bg;
+    });
+  });
+}
+
+/* ================= 服务状态探测 ================= */
+async function checkService() {
+  try {
+    const res = await fetch("/api/info");
+    const j = await res.json();
+    if (res.ok && j.ok) {
+      $("statusDot").className = "dot ok";
+      $("statusText").textContent = "服务正常";
+      $("statusInfo").textContent =
+        "端口 " + j.port + " · 缓存保留 " + j.cache_days + " 天 · CPU " + j.cpu_count +
+        " 核 · 缓存目录 " + j.cache_dir;
+    } else {
+      throw new Error("bad");
+    }
+  } catch (e) {
+    $("statusDot").className = "dot err";
+    $("statusText").textContent = "服务未连接";
+    $("statusInfo").textContent = "请确认程序已启动（双击 run.bat，或运行 python web_app.py）";
+  }
+}
+
+/* ================= 初始化 ================= */
+function init() {
+  ["a", "b"].forEach(wireSlot);
+  wireBgToggle();
+  wireZoom();
+  $("btnExtract").addEventListener("click", doExtract);
+  $("btnSave").addEventListener("click", doSave);
+  $("btnOpenOut").addEventListener("click", openOut);
+  // 半透明归因开关（旧版 un-blending，默认关闭）：切换后刷新预览。
+  // 该开关在「提取」时才会发给服务端，切换后需重新提取方才生效。
+  $("semiAttribution").addEventListener("change", () => {
+    updateSemiUI();
+    schedulePreview();
+    if (state.result) {
+      toast(semiAttrOn()
+        ? "已切到旧版 un-blending，请重新点击「开始提取」后生效"
+        : "已切回「原色提取 + 边缘羽化」，请重新点击「开始提取」后生效",
+        "warn", 4500);
+    }
+  });
+  // 透明判定滑块：拖动即时刷新预览（保存按同一取值导出，保证预览 = 导出）
+  $("transparency").addEventListener("input", () => {
+    $("transparencyVal").textContent = transparencyValue() + "%";
+    schedulePreview();
+  });
+  // 四角定位像素开关：立即刷新预览
+  $("cornerMarkers").addEventListener("change", schedulePreview);
+  $("plainView").addEventListener("change", schedulePreview);
+  $("feather").addEventListener("change", () => {
+    // 羽化半径改变需要重新提取（服务端计算），提示用户
+    if (state.result) toast("已修改羽化半径，请重新点击「开始提取」", "warn", 4000);
+  });
+  checkService();
+}
+
+init();
+</script>
+</body>
+</html>
